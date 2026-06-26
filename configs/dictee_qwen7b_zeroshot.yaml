@@ -6,19 +6,19 @@ name: dictee_qwen7b_zeroshot
 seed: 42
 
 model:
-  name: Qwen/Qwen2.5-VL-7B-Instruct
+  name: qwen3-vl
   kind: vlm
   temperature: 0.0
-  max_tokens: 2048
+  max_tokens: 4096   # 83 items en JSON ~3400 tokens : 2048 tronque la reponse
   request_logprobs: true
 
 data:
   corpus: dictee
   # Chemins S3 (s3://...) ou locaux. Voir .env pour les identifiants S3.
-  images_path: data/raw/dictee_2015
-  labels_path: data/raw/resultat_dictee_2015.csv
+  images_path: s3://projet-production-ecrits-depp/dictee_2015
+  labels_path: s3://projet-production-ecrits-depp/resultat_dictee_2015.csv
   grid_path: configs/grille_dictee_2015.json
-  limit: 50          # commencer petit ; mettre null pour tout le corpus
+  limit: 10          # commencer petit ; mettre null pour tout le corpus
 
 grid:
   scheme: simplifiee  # cible principale 1/erreur/0 (voir CLAUDE.md §3)
