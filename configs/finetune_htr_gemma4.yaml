@@ -1,0 +1,57 @@
+# Fine-tuning HTR (transcription) sur Scoledit tous niveaux CP → CM2.
+# À lancer depuis un service GPU du SSP Cloud (H100 80 Go recommandé) :
+#   python scripts/finetune_htr_scoledit.py --config configs/finetune_htr_gemma4.yaml
+#
+# Prérequis d'installation :
+#   pip install unsloth trl peft transformers bitsandbytes \
+#               accelerate datasets pillow s3fs pyyaml pydantic mlflow
+
+name: htr_gemma4_scoledit_finetune_v1
+
+# Modèle de base : gemma4 27B, chargé en 4-bit (QLoRA).
+# Sur H100 80 Go, tu peux passer à load_in_4bit=false pour du LoRA plein
+# (meilleure qualité, +30 Go VRAM).
+base_model: unsloth/gemma-4-27b-it
+load_in_4bit: true
+
+data:
+  # Racines S3 (les sous-dossiers CP/, CE1/, ..., CM2/ sont ajoutés au runtime).
+  scans_root: s3://projet-production-ecrits-depp/scoledit/scans
+  annotations_root: s3://projet-production-ecrits-depp/scoledit/annotation
+  levels: [CP, CE1, CE2, CM1, CM2]
+  train_ratio: 0.70          # 70 % train, 15 % val, 15 % test (test intact)
+  val_ratio: 0.15
+  seed: 42
+  limit: null                # null = toutes les copies ; mettre 100 pour tester
+
+lora:
+  r: 16                      # 16 = compromis qualité/mémoire ; monter à 32 si stagnation
+  lora_alpha: 32
+  lora_dropout: 0.05
+  # Cibler vision ET langage : essentiel pour l'HTR (adapter la vue enfantine
+  # ET la génération de texte fidèle).
+  finetune_vision_layers: true
+  finetune_language_layers: true
+  finetune_attention_modules: true
+  finetune_mlp_modules: true
+
+training:
+  output_dir: checkpoints/htr_gemma4_scoledit_v1
+  num_train_epochs: 3        # 3 epochs = point de départ ; ajuster selon la loss val
+  per_device_train_batch_size: 2
+  per_device_eval_batch_size: 2
+  gradient_accumulation_steps: 8   # batch effectif = 16
+  learning_rate: 2.0e-4
+  warmup_ratio: 0.1
+  lr_scheduler_type: cosine
+  weight_decay: 0.01
+  logging_steps: 10
+  eval_steps: 200
+  save_steps: 200
+  save_total_limit: 3
+  bf16: true                 # H100 supporte bfloat16 nativement
+  gradient_checkpointing: true
+  report_to: mlflow          # suivi dans user-<toi>-mlflow.user.lab.sspcloud.fr
+  max_seq_length: 2048
+
+read_final_state: true       # en cas de rature, lire l'état final

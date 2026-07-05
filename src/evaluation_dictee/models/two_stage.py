@@ -282,6 +282,7 @@ class TwoStageScorer(Scorer):
                         code=str(entry.get("code", "?")).strip(),
                         confidence=entry.get("confidence"),
                         transcription=entry.get("transcription"),
+                        comparaison=entry.get("comparaison"),
                     )
                 )
         return CopyPrediction(copy_id=copy.copy_id, items=items)

@@ -48,6 +48,13 @@ class ModelConfig(BaseModel):
     # Une copie restée sans transcription après tous les essais est marquée
     # "non transcrite" et exclue du calcul des métriques de performance.
     max_retries: int = 2
+    # Désactiver le mode « thinking » natif des modèles Qwen3 / DeepSeek-R1.
+    # Ces modèles génèrent par défaut un bloc <think>...</think> avant la réponse,
+    # ce qui casse le parsing JSON et multiplie la latence par 5 à 10.
+    # Mettre à True pour tout modèle thinking : Qwen3-235B-A22B, Qwen3.6-35B-A3B,
+    # QwQ, DeepSeek-R1, etc.
+    # Sans effet sur les modèles classiques (gemma4, Qwen2.5-VL, ...).
+    disable_thinking: bool = True
 
 
 class DataConfig(BaseModel):
@@ -84,6 +91,10 @@ class PromptConfig(BaseModel):
     n_few_shot: int = 0  # nombre d'exemples annotés dans le prompt
     enforce_faithful: bool = True  # consigne anti-sur-correction
     read_final_state: bool = True  # règle des ratures : lire l'état final
+    # Chain-of-thought : force le modèle à écrire un champ "comparaison" AVANT
+    # le code, pour verbaliser la différence lue-attendue. Rend le raisonnement
+    # inspectable et réduit les erreurs bien lues mais mal codées (« mis » vs « mit »).
+    chain_of_thought: bool = False
 
 
 class ExperimentConfig(BaseModel):
@@ -117,3 +128,50 @@ def load_config(path: str | Path) -> ExperimentConfig:
     with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
     return ExperimentConfig.model_validate(raw)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Configuration pour le pipeline HTR (transcription seule, corpus Scoledit)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class HTRDataConfig(BaseModel):
+    """Localisation des données Scoledit pour l'évaluation HTR."""
+
+    # Dossier des images de copies (local ou s3://.../scans/CE1/).
+    scans_path: str
+    # Dossier des transcriptions JSON de référence (local ou s3://.../annotation/CE1/).
+    annotations_path: str
+    # Limiter le nombre d'échantillons (utile pour les tests rapides).
+    limit: int | None = None
+
+
+class HTRExperimentConfig(BaseModel):
+    """Configuration complète d'une expérience de transcription (HTR).
+
+    Volontairement distincte d'`ExperimentConfig` car la structure des données
+    (scans + annotations JSON) et les métriques (CER/WER) diffèrent de celles
+    du codage de dictée. Mêmes principes toutefois : validation Pydantic,
+    un fichier YAML = un run reproductible.
+    """
+
+    name: str = Field(..., description="Nom unique du run.")
+    seed: int = 42
+    model: ModelConfig
+    data: HTRDataConfig
+    # Consigne HTR : en cas de rature, lire l'état final (corrigé par l'élève).
+    read_final_state: bool = True
+
+
+def load_htr_config(path: str | Path) -> HTRExperimentConfig:
+    """Charge et valide une configuration HTR depuis un fichier YAML.
+
+    Args:
+        path: chemin vers le fichier YAML.
+
+    Returns:
+        La configuration HTR validée.
+    """
+    with open(path, encoding="utf-8") as f:
+        raw = yaml.safe_load(f)
+    return HTRExperimentConfig.model_validate(raw)

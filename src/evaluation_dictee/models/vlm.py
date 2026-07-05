@@ -95,11 +95,20 @@ class VLMScorer(Scorer):
         prediction: CopyPrediction | None = None
         for attempt in range(self.model_config.max_retries + 1):
             temp = self.model_config.temperature + (0.3 if attempt > 0 else 0.0)
+            # Les modèles thinking (Qwen3, DeepSeek-R1) génèrent par défaut un
+            # bloc <think>...</think> qui casse le parsing JSON et multiplie la
+            # latence. On le désactive via extra_body quand disable_thinking=True.
+            extra_body = (
+                {"chat_template_kwargs": {"enable_thinking": False}}
+                if self.model_config.disable_thinking
+                else {}
+            )
             response = self.client.chat.completions.create(
                 model=self.model_config.name,
                 temperature=temp,
                 max_tokens=self.model_config.max_tokens,
                 messages=messages,
+                extra_body=extra_body or None,
             )
             content = response.choices[0].message.content or "{}"
             prediction = self._parse_response(copy, content)
@@ -174,6 +183,7 @@ class VLMScorer(Scorer):
                         code=str(entry.get("code", "?")).strip(),
                         confidence=entry.get("confidence"),
                         transcription=entry.get("transcription"),
+                        comparaison=entry.get("comparaison"),
                     )
                 )
         return CopyPrediction(copy_id=copy.copy_id, items=items)

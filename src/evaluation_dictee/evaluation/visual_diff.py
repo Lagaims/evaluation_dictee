@@ -49,18 +49,35 @@ def _img_base64(path: str, max_width: int = 1100) -> str:
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
-def _chip(mot: str, code: str, transcription: str | None = None, divergent: bool = False) -> str:
-    """Rend une « puce » HTML pour un item : mot attendu + code, colorée."""
+def _chip(
+    mot: str,
+    code: str,
+    transcription: str | None = None,
+    comparaison: str | None = None,
+    divergent: bool = False,
+) -> str:
+    """Rend une « puce » HTML pour un item : mot attendu + code, colorée.
+
+    Affiche également la transcription (« lu : … ») quand elle diffère du mot
+    attendu, et le raisonnement chain-of-thought (« → … ») quand il est fourni.
+    """
     bg = _COULEUR_CODE.get(code, "#ffffff")
     bord = "2px solid #b00020" if divergent else "1px solid #ccc"
     trans = ""
     if transcription is not None and transcription.strip() not in ("", mot):
         trans = f"<div class='trans'>lu : « {html.escape(transcription)} »</div>"
+    comp = ""
+    if (
+        comparaison is not None
+        and comparaison.strip()
+        and comparaison.strip().lower() != "identique"
+    ):
+        comp = f"<div class='comp'>→ {html.escape(comparaison)}</div>"
     return (
         f"<span class='chip' style='background:{bg};border:{bord}'>"
         f"<span class='mot'>{html.escape(mot)}</span>"
         f"<span class='code'>{html.escape(code)}</span>"
-        f"{trans}</span>"
+        f"{trans}{comp}</span>"
     )
 
 
@@ -106,9 +123,18 @@ def build_copy_comparison(
         m = model_preds.get(it.item_id, {})
         mcode = m.get("code", "?")
         mtrans = m.get("transcription")
+        mcomp = m.get("comparaison")
         divergent = e != mcode
         chips_expert.append(_chip(it.attendu, e, divergent=divergent))
-        chips_modele.append(_chip(it.attendu, mcode, transcription=mtrans, divergent=divergent))
+        chips_modele.append(
+            _chip(
+                it.attendu,
+                mcode,
+                transcription=mtrans,
+                comparaison=mcomp,
+                divergent=divergent,
+            )
+        )
         if mtrans:
             transcription_libre.append(mtrans)
 
@@ -166,6 +192,7 @@ _PAGE_CSS = """
   .chip .mot { font-size:0.9em; }
   .chip .code { font-size:0.7em; color:#555; font-weight:bold; }
   .chip .trans { font-size:0.65em; color:#b00020; margin-top:2px; }
+  .chip .comp { font-size:0.65em; color:#1565c0; margin-top:1px; font-style:italic; }
   .legende span { padding:3px 8px; border-radius:4px; margin-right:8px; }
 """
 
@@ -232,6 +259,7 @@ def generate_comparison_report(
     from evaluation_dictee.data.grid import normalize as _normalize
 
     has_trans = "transcription" in predictions_df.columns
+    has_comp = "comparaison" in predictions_df.columns
     has_raw = "raw_transcription" in predictions_df.columns
     fragments = []
     for copy_id in copy_ids:
@@ -240,6 +268,7 @@ def generate_comparison_report(
             r["item_id"]: {
                 "code": r["y_pred"],
                 "transcription": r["transcription"] if has_trans else None,
+                "comparaison": r["comparaison"] if has_comp else None,
                 "confidence": r.get("confidence"),
             }
             for _, r in sub.iterrows()

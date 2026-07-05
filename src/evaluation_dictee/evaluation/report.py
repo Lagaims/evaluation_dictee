@@ -45,7 +45,7 @@ def load_predictions(predictions_path: str | Path) -> pd.DataFrame:
 
 
 def per_item_metrics(df: pd.DataFrame, level: float = 0.95) -> pd.DataFrame:
-    """Métriques par item, avec intervalle de Wilson sur l'accord.
+    """Métriques par item, avec intervalle de Wilson sur l'accord et la prévalence.
 
     Args:
         df: DataFrame des prédictions.
@@ -55,7 +55,8 @@ def per_item_metrics(df: pd.DataFrame, level: float = 0.95) -> pd.DataFrame:
         DataFrame indexé par item_id :
         - n, accord, accord_lo, accord_hi (intervalle de Wilson)
         - kappa (NaN si pas de variance)
-        - pct_erreur_expert / pct_erreur_modele : prévalence d'erreur selon chacun
+        - pct_erreur_expert / pct_erreur_modele : prévalence d'erreur (%) selon chacun
+        - pct_erreur_expert_lo/hi, pct_erreur_modele_lo/hi : IC Wilson à 95 %
         - rappel_erreur : parmi les erreurs de l'expert, % retrouvées par le modèle
         - precision_erreur : parmi les erreurs du modèle, % confirmées par l'expert
         - n_sur_correction / n_sur_detection : effectifs des deux désaccords
@@ -81,6 +82,10 @@ def per_item_metrics(df: pd.DataFrame, level: float = 0.95) -> pd.DataFrame:
         sur_corr = int((exp_err & ~mod_err).sum())  # expert: erreur, modèle: correct
         sur_det = int((~exp_err & mod_err).sum())  # expert: correct, modèle: erreur
 
+        # Intervalles de Wilson sur la prévalence d'erreur (proportion binomiale)
+        ci_exp = wilson_interval(n_exp_err, n, level)
+        ci_mod = wilson_interval(n_mod_err, n, level)
+
         rows.append(
             {
                 "item_id": item_id,
@@ -90,7 +95,11 @@ def per_item_metrics(df: pd.DataFrame, level: float = 0.95) -> pd.DataFrame:
                 "accord_hi": ci.upper,
                 "kappa": kappa,
                 "pct_erreur_expert": n_exp_err / n * 100,
+                "pct_erreur_expert_lo": ci_exp.lower * 100,
+                "pct_erreur_expert_hi": ci_exp.upper * 100,
                 "pct_erreur_modele": n_mod_err / n * 100,
+                "pct_erreur_modele_lo": ci_mod.lower * 100,
+                "pct_erreur_modele_hi": ci_mod.upper * 100,
                 "rappel_erreur": vrais_pos / n_exp_err if n_exp_err else float("nan"),
                 "precision_erreur": vrais_pos / n_mod_err if n_mod_err else float("nan"),
                 "n_sur_correction": sur_corr,
@@ -112,19 +121,39 @@ def per_copy_metrics(df: pd.DataFrame) -> pd.DataFrame:
     Returns:
         DataFrame indexé par copy_id :
         - n_items, accord
-        - pct_erreur_expert : % d'items en erreur selon l'expert (proxy du
-          niveau de l'élève)
-        - confiance_moyenne : confiance moyenne du modèle sur la copie
+        - n_erreurs_expert, n_erreurs_modele : nombre total d'items non corrects
+          (codes 9 ET 0) selon l'expert et le modèle. Sert de proxy du niveau
+          global de la copie.
+        - n_fautes_expert, n_fautes_modele : nombre d'items code 9 (fautes
+          d'orthographe stricto sensu).
+        - n_manquants_expert, n_manquants_modele : nombre d'items code 0
+          (mots oubliés par l'élève).
+        - pct_erreur_expert / pct_erreur_modele : mêmes grandeurs en pourcentage.
+        - confiance_moyenne : confiance moyenne du modèle sur la copie.
     """
     rows = []
     for copy_id, grp in df.groupby("copy_id"):
         n = len(grp)
+        y_true, y_pred = grp["y_true"], grp["y_pred"]
+        n_err_exp = int((y_true != "1").sum())
+        n_err_mod = int((y_pred != "1").sum())
+        n_fautes_exp = int((y_true == "9").sum())
+        n_fautes_mod = int((y_pred == "9").sum())
+        n_manq_exp = int((y_true == "0").sum())
+        n_manq_mod = int((y_pred == "0").sum())
         rows.append(
             {
                 "copy_id": copy_id,
                 "n_items": n,
-                "accord": float((grp["y_true"] == grp["y_pred"]).mean()),
-                "pct_erreur_expert": float((grp["y_true"] != "1").mean() * 100),
+                "accord": float((y_true == y_pred).mean()),
+                "n_erreurs_expert": n_err_exp,
+                "n_erreurs_modele": n_err_mod,
+                "n_fautes_expert": n_fautes_exp,
+                "n_fautes_modele": n_fautes_mod,
+                "n_manquants_expert": n_manq_exp,
+                "n_manquants_modele": n_manq_mod,
+                "pct_erreur_expert": n_err_exp / n * 100 if n else 0.0,
+                "pct_erreur_modele": n_err_mod / n * 100 if n else 0.0,
                 "confiance_moyenne": float(grp["confidence"].dropna().mean())
                 if grp["confidence"].notna().any()
                 else float("nan"),

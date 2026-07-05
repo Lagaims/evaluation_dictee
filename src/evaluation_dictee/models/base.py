@@ -21,12 +21,15 @@ class ItemPrediction:
         code: code prédit (selon le schéma de la config).
         confidence: score de confiance dans [0, 1] (None si indisponible).
         transcription: ce que le modèle a lu (utile pour l'analyse, optionnel).
+        comparaison: description de la différence lue-attendue quand le mode
+            chain-of-thought est activé (None sinon). Sert au diagnostic.
     """
 
     item_id: str
     code: str
     confidence: float | None = None
     transcription: str | None = None
+    comparaison: str | None = None
 
 
 @dataclass

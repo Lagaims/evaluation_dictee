@@ -142,10 +142,29 @@ def build_dictation_prompt(
     parts += [
         "",
         f"Tu dois rendre EXACTEMENT {len(items)} items, dans cet ordre.",
-        "Réponds UNIQUEMENT par un objet JSON, sans texte autour, de la forme :",
-        '{"items": [{"item_id": "...", "transcription": "ce que l\'élève a écrit", '
-        '"code": "1", "confidence": 0.95}, ...]}',
     ]
+
+    if config.chain_of_thought:
+        # Le champ "comparaison" force le modèle à VERBALISER la différence
+        # lue-attendue avant de choisir le code, ce qui rend le raisonnement
+        # inspectable et réduit les erreurs bien lues mais mal codées.
+        parts += [
+            "AVANT de choisir le code, écris un champ « comparaison » qui décrit "
+            "explicitement en quoi la transcription diffère du mot attendu (ou "
+            "précise « identique » si elles correspondent lettre à lettre). "
+            "Exemple : attendu « inquiets » lu « inquiet » → « il manque le 's' final ».",
+            "Réponds UNIQUEMENT par un objet JSON, sans texte autour, de la forme :",
+            '{"items": [{"item_id": "...", "transcription": "ce que l\'élève a écrit", '
+            '"comparaison": "identique" OU description brève de la différence, '
+            '"code": "1", "confidence": 0.95}, ...]}',
+        ]
+    else:
+        parts += [
+            "Réponds UNIQUEMENT par un objet JSON, sans texte autour, de la forme :",
+            '{"items": [{"item_id": "...", "transcription": "ce que l\'élève a écrit", '
+            '"code": "1", "confidence": 0.95}, ...]}',
+        ]
+
     return "\n".join(parts)
 
 
