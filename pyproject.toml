@@ -50,6 +50,7 @@ gpu = [
 
 [project.scripts]
 eval-ecrit = "evaluation_dictee.cli:app"
+add-langfuse-prompt = "evaluation_dictee.utils.add_langfuse_prompt:push_prompts"
 
 [build-system]
 requires = ["hatchling"]
