@@ -1,0 +1,42 @@
+# Expérience : APPROCHE 1 (deux étapes) sur la dictée 2015.
+# Étape 1 (HTR) : gemma4 lit l'image et transcrit le texte brut.
+# Étape 2 (codage) : un modèle code le texte transcrit (ici aussi gemma4 ;
+#   on pourrait mettre un modèle texte seul plus léger via model_stage2).
+#
+# Pour une comparaison équitable avec l'approche end-to-end
+# (dictee_gemma4_zeroshot.yaml), garder le MÊME modèle des deux côtés : on isole
+# ainsi l'effet de l'architecture (1 vs 2 étapes) de l'effet du modèle.
+
+name: dictee_gemma4_2stages
+seed: 42
+approach: two_stage
+
+model:                      # étape 1 : HTR (doit être multimodal)
+  name: gemma4-26b-moe
+  kind: vlm
+  temperature: 0.0
+  max_tokens: 4096
+  max_retries: 2
+
+model_stage2:               # étape 2 : codage du texte (peut être texte seul)
+  name: gemma4-26b-moe      # ex. remplaçable par un LLM texte plus léger
+  kind: llm
+  temperature: 0.0
+  max_tokens: 8192          # 83 items × ~60 tokens JSON, marge pour éviter la troncature
+  max_retries: 2
+
+data:
+  corpus: dictee
+  images_path: s3://projet-production-ecrits-depp/dictee_2015/
+  labels_path: s3://projet-production-ecrits-depp/resultat_dictee_2015.csv
+  grid_path: configs/grille_dictee_2015.json
+  limit: 10
+
+grid:
+  scheme: simplifiee
+
+prompt:
+  method: C
+  n_few_shot: 0
+  enforce_faithful: true
+  read_final_state: true

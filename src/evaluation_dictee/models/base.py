@@ -21,12 +21,15 @@ class ItemPrediction:
         code: code prédit (selon le schéma de la config).
         confidence: score de confiance dans [0, 1] (None si indisponible).
         transcription: ce que le modèle a lu (utile pour l'analyse, optionnel).
+        comparaison: description de la différence lue-attendue quand le mode
+            chain-of-thought est activé (None sinon). Sert au diagnostic.
     """
 
     item_id: str
     code: str
     confidence: float | None = None
     transcription: str | None = None
+    comparaison: str | None = None
 
 
 @dataclass
@@ -46,6 +49,9 @@ class CopyPrediction:
     items: list[ItemPrediction]
     transcribed: bool = True
     n_attempts: int = 1
+    # Transcription brute produite à l'étape 1 (approche two_stage). None en
+    # approche end_to_end, où la transcription n'existe que par item.
+    raw_transcription: str | None = None
 
 
 class Scorer(ABC):

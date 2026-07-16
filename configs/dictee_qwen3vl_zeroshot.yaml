@@ -1,13 +1,13 @@
-# Expérience : dictée 2015, gemma4-26b-moe servi sur llm.lab (SSP Cloud).
+# Expérience : dictée 2015, qwen3-vl servi sur llm.lab (SSP Cloud).
 # Modèle multimodal accessible directement via API : aucun GPU à privatiser.
 # Données lues directement sur S3.
 
-name: dictee_gemma4_zeroshot
+name: qwen3vl_zeroshot
 seed: 42
 
 model:
   # Nom exact tel qu'affiché sur https://llm.lab.sspcloud.fr
-  name: gemma4-26b-moe
+  name: qwen3-vl
   kind: vlm
   temperature: 0.0
   max_tokens: 4096

@@ -1,0 +1,19 @@
+# Évaluation de la TRANSCRIPTION (HTR) sur le corpus Scoledit.
+# Mesure la fidélité de lecture du modèle (CER/WER), indépendamment du codage.
+# Pour changer de modèle : modifier uniquement `model.name`.
+
+name: htr_qwen3vl_scoledit
+
+model:
+  name: qwen3-vl      # ← seul champ à changer pour tester un autre VLM
+  kind: vlm
+  temperature: 0.0
+  max_tokens: 2048
+  max_retries: 2
+
+data:
+  scans_dir: s3://projet-production-ecrits-depp/scoledit/scans/CE1/
+  annotations_dir: s3://projet-production-ecrits-depp/scoledit/annotation/CE1/
+  limit: 10                 # null pour tout le corpus
+
+read_final_state: true      # en cas de rature, lire l'état final

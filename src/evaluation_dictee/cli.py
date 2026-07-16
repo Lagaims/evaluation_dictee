@@ -12,7 +12,7 @@ from rich.table import Table
 
 from evaluation_dictee.config import Secrets, load_config
 from evaluation_dictee.data.reference import load_grid
-from evaluation_dictee.models.vlm import VLMScorer
+from evaluation_dictee.models.factory import build_scorer
 from evaluation_dictee.pipeline.benchmark import run_benchmark
 from evaluation_dictee.utils.tracking import experiment_run, log_metrics
 
@@ -33,13 +33,11 @@ def benchmark(config_path: str) -> None:
     console.print(f"[bold]Run :[/bold] {config.name}")
     console.print(f"Modèle : {config.model.name} | Méthode : {config.prompt.method}")
 
-    scorer = VLMScorer(
-        model_config=config.model,
-        prompt_config=config.prompt,
+    scorer = build_scorer(
+        config=config,
+        grid_items=load_grid(config.data.grid_path).items,
         base_url=secrets.llm_base_url,
         api_key=secrets.llm_api_key,
-        grid_items=load_grid(config.data.grid_path).items,
-        scheme=config.grid.scheme,
     )
 
     with experiment_run(config):

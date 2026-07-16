@@ -106,12 +106,12 @@ uniquement les items incertains. Le livrable décisionnel est la courbe
 ## 7. Structure du dépôt
 
 ```
-evaluation_dictee/
+evaluation_ecrit/
 ├── CLAUDE.md                 ← ce fichier
 ├── README.md                 ← démarrage rapide
 ├── pyproject.toml            ← dépendances + config outils
 ├── configs/                  ← fichiers YAML d'expériences (un par run)
-├── src/evaluation_dictee/
+├── src/evaluation_ecrit/
 │   ├── config.py             ← chargement/validation des configs (Pydantic)
 │   ├── data/                 ← chargement images, parsing grille, I/O S3
 │   ├── models/               ← interfaces modèles (VLM via vLLM, HTR, base)
@@ -153,8 +153,55 @@ pytest                          # tests
 mypy src                        # typage
 
 # Lancer un benchmark à partir d'une config
-python scripts/run_benchmark.py --config configs/dictee_qwen7b_zeroshot.yaml
+python scripts/run_benchmark.py --config configs/dictee_gemma4_zeroshot.yaml
 ```
+
+### Runs longs — utiliser screen ou nohup
+
+Un benchmark complet (3469 copies × ~30 s) prend ~30 h. **Ne jamais le lancer
+directement dans le terminal du navigateur** : au moindre plantage réseau, mise
+en veille, fermeture d'onglet, le processus est tué et tout est perdu.
+
+> **Note Onyxia** : `tmux` n'est pas disponible sur les services vscode-python
+> du SSP Cloud (`apt-get install tmux` échoue). Utiliser `screen` ou `nohup`.
+
+**Toujours créer le dossier logs d'abord :**
+```bash
+mkdir -p logs
+```
+
+**Option 1 (recommandée) — screen.** Session détachable, tu peux fermer le
+navigateur et revenir le lendemain.
+```bash
+screen -S dictee                                            # créer la session
+python scripts/run_benchmark.py --config configs/dictee_gemma4_cot.yaml
+# Détacher : Ctrl+A puis D  (le job continue en arrière-plan)
+screen -r dictee                                            # se rattacher plus tard
+screen -ls                                                  # lister les sessions
+```
+
+**Option 2 — nohup.** Sans interface interactive, log dans un fichier.
+```bash
+mkdir -p logs
+nohup python scripts/run_benchmark.py --config configs/dictee_gemma4_cot.yaml \
+      > logs/dictee_gemma4_cot.log 2>&1 &
+echo $! > logs/dictee_gemma4_cot.pid          # noter le PID pour arrêter plus tard
+tail -f logs/dictee_gemma4_cot.log            # suivre le log en direct
+```
+
+### Checkpointing et reprise après crash
+
+Depuis la refonte du benchmark, **chaque copie est écrite sur disque
+immédiatement** (`flush + fsync`). Effets :
+
+- Un crash à mi-run (API down, kernel tué, …) ne perd que la copie en cours.
+- Relancer la même commande **reprend automatiquement** où on s'était arrêté :
+  les copies déjà présentes dans `<run>_predictions.jsonl` sont sautées.
+- Les copies qui lèvent une exception API sont loggées dans
+  `<run>_failed_copies.txt` et le run continue sur les suivantes. Elles seront
+  retentées au prochain lancement.
+- Pour repartir de zéro, supprimer `<run>_predictions.jsonl` (ou changer
+  `config.name`).
 
 ## 10. Pour un⋅e débutant⋅e
 

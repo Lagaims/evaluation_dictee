@@ -49,18 +49,35 @@ def _img_base64(path: str, max_width: int = 1100) -> str:
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
-def _chip(mot: str, code: str, transcription: str | None = None, divergent: bool = False) -> str:
-    """Rend une « puce » HTML pour un item : mot attendu + code, colorée."""
+def _chip(
+    mot: str,
+    code: str,
+    transcription: str | None = None,
+    comparaison: str | None = None,
+    divergent: bool = False,
+) -> str:
+    """Rend une « puce » HTML pour un item : mot attendu + code, colorée.
+
+    Affiche également la transcription (« lu : … ») quand elle diffère du mot
+    attendu, et le raisonnement chain-of-thought (« → … ») quand il est fourni.
+    """
     bg = _COULEUR_CODE.get(code, "#ffffff")
     bord = "2px solid #b00020" if divergent else "1px solid #ccc"
     trans = ""
     if transcription is not None and transcription.strip() not in ("", mot):
         trans = f"<div class='trans'>lu : « {html.escape(transcription)} »</div>"
+    comp = ""
+    if (
+        comparaison is not None
+        and comparaison.strip()
+        and comparaison.strip().lower() != "identique"
+    ):
+        comp = f"<div class='comp'>→ {html.escape(comparaison)}</div>"
     return (
         f"<span class='chip' style='background:{bg};border:{bord}'>"
         f"<span class='mot'>{html.escape(mot)}</span>"
         f"<span class='code'>{html.escape(code)}</span>"
-        f"{trans}</span>"
+        f"{trans}{comp}</span>"
     )
 
 
@@ -70,6 +87,7 @@ def build_copy_comparison(
     grid_items: list[GridItem],
     expert_codes: dict[str, str],
     model_preds: dict[str, dict],
+    raw_transcription: str | None = None,
 ) -> str:
     """Construit le HTML de comparaison pour une copie.
 
@@ -79,6 +97,9 @@ def build_copy_comparison(
         grid_items: items de la grille dans l'ordre (mot attendu).
         expert_codes: {item_id: code_expert}.
         model_preds: {item_id: {"code": ..., "transcription": ..., "confidence": ...}}.
+        raw_transcription: transcription brute de l'étape 1 (approche two_stage).
+            Si fournie, elle est affichée telle quelle ; sinon la transcription est
+            reconstituée en recollant les transcriptions par item (approche end_to_end).
 
     Returns:
         Un fragment HTML pour cette copie.
@@ -102,13 +123,29 @@ def build_copy_comparison(
         m = model_preds.get(it.item_id, {})
         mcode = m.get("code", "?")
         mtrans = m.get("transcription")
+        mcomp = m.get("comparaison")
         divergent = e != mcode
         chips_expert.append(_chip(it.attendu, e, divergent=divergent))
-        chips_modele.append(_chip(it.attendu, mcode, transcription=mtrans, divergent=divergent))
+        chips_modele.append(
+            _chip(
+                it.attendu,
+                mcode,
+                transcription=mtrans,
+                comparaison=mcomp,
+                divergent=divergent,
+            )
+        )
         if mtrans:
             transcription_libre.append(mtrans)
 
-    transcription_txt = html.escape(" ".join(transcription_libre)) or "<em>(non fournie)</em>"
+    # Priorité à la transcription brute de l'étape 1 (approche two_stage), qui est
+    # la VRAIE lecture du modèle. À défaut, on recolle les transcriptions par item.
+    if raw_transcription and raw_transcription.strip():
+        transcription_txt = html.escape(raw_transcription.strip())
+        source_trans = "étape 1 (HTR)"
+    else:
+        transcription_txt = html.escape(" ".join(transcription_libre)) or "<em>(non fournie)</em>"
+        source_trans = "reconstituée par item"
 
     return f"""
     <section class="copie">
@@ -120,7 +157,7 @@ def build_copy_comparison(
         <img src="{img_data}" alt="copie {html.escape(copy_id)}"/>
       </div>
       <div class="bloc">
-        <h3>3 · Transcription par le modèle</h3>
+        <h3>3 · Transcription par le modèle <small>({source_trans})</small></h3>
         <p class="transcription">{transcription_txt}</p>
       </div>
       <div class="bloc">
@@ -155,6 +192,7 @@ _PAGE_CSS = """
   .chip .mot { font-size:0.9em; }
   .chip .code { font-size:0.7em; color:#555; font-weight:bold; }
   .chip .trans { font-size:0.65em; color:#b00020; margin-top:2px; }
+  .chip .comp { font-size:0.65em; color:#1565c0; margin-top:1px; font-style:italic; }
   .legende span { padding:3px 8px; border-radius:4px; margin-right:8px; }
 """
 
@@ -221,6 +259,8 @@ def generate_comparison_report(
     from evaluation_dictee.data.grid import normalize as _normalize
 
     has_trans = "transcription" in predictions_df.columns
+    has_comp = "comparaison" in predictions_df.columns
+    has_raw = "raw_transcription" in predictions_df.columns
     fragments = []
     for copy_id in copy_ids:
         sub = predictions_df[predictions_df["copy_id"] == copy_id]
@@ -228,10 +268,16 @@ def generate_comparison_report(
             r["item_id"]: {
                 "code": r["y_pred"],
                 "transcription": r["transcription"] if has_trans else None,
+                "comparaison": r["comparaison"] if has_comp else None,
                 "confidence": r.get("confidence"),
             }
             for _, r in sub.iterrows()
         }
+        # Transcription brute de l'étape 1 (identique sur toutes les lignes de la copie)
+        raw_trans = None
+        if has_raw and len(sub):
+            vals = sub["raw_transcription"].dropna()
+            raw_trans = vals.iloc[0] if len(vals) else None
         # Normaliser les codes experts bruts (ex. 3/4/5 → 9 en mode simplifié)
         raw_expert = expert_labels.get(copy_id, {})
         norm_expert = {iid: _normalize(code, scheme) for iid, code in raw_expert.items()}
@@ -242,6 +288,7 @@ def generate_comparison_report(
                 grid_items=grid_items,
                 expert_codes=norm_expert,
                 model_preds=model_preds,
+                raw_transcription=raw_trans,
             )
         )
 

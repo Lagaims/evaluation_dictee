@@ -1,0 +1,34 @@
+# Expérience : approche end-to-end AVEC chain-of-thought pour améliorer le codage.
+# Le modèle doit écrire un champ "comparaison" verbalisant la différence
+# lue-attendue AVANT de choisir le code. Rend le raisonnement inspectable et
+# réduit les erreurs bien lues mais mal codées (« mis » vs « mit »).
+
+name: dictee_qwen3vl_cot
+seed: 42
+approach: end_to_end
+
+model:
+  name: qwen3-vl
+  kind: vlm
+  temperature: 0.0
+  max_tokens: 8192           # + 1 champ par item : marge nécessaire
+  max_retries: 2
+  disable_thinking: true         # ← OBLIGATOIRE pour Qwen3 : évite <think>...</think>
+                                 # qui casse le parsing JSON et multiplie la latence
+
+data:
+  corpus: dictee
+  images_path: s3://projet-production-ecrits-depp/dictee_2015/
+  labels_path: s3://projet-production-ecrits-depp/resultat_dictee_2015.csv
+  grid_path: configs/grille_dictee_2015.json
+  limit: null
+
+grid:
+  scheme: simplifiee
+
+prompt:
+  method: C
+  n_few_shot: 0
+  enforce_faithful: true
+  read_final_state: true
+  chain_of_thought: true     # ← active la verbalisation de la comparaison

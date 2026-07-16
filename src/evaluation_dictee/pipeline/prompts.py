@@ -142,8 +142,126 @@ def build_dictation_prompt(
     parts += [
         "",
         f"Tu dois rendre EXACTEMENT {len(items)} items, dans cet ordre.",
+    ]
+
+    if config.chain_of_thought:
+        # Le champ "comparaison" force le modèle à VERBALISER la différence
+        # lue-attendue avant de choisir le code, ce qui rend le raisonnement
+        # inspectable et réduit les erreurs bien lues mais mal codées.
+        parts += [
+            "AVANT de choisir le code, écris un champ « comparaison » qui décrit "
+            "explicitement en quoi la transcription diffère du mot attendu (ou "
+            "précise « identique » si elles correspondent lettre à lettre). "
+            "Exemple : attendu « inquiets » lu « inquiet » → « il manque le 's' final ».",
+            "Réponds UNIQUEMENT par un objet JSON, sans texte autour, de la forme :",
+            '{"items": [{"item_id": "...", "transcription": "ce que l\'élève a écrit", '
+            '"comparaison": "identique" OU description brève de la différence, '
+            '"code": "1", "confidence": 0.95}, ...]}',
+        ]
+    else:
+        parts += [
+            "Réponds UNIQUEMENT par un objet JSON, sans texte autour, de la forme :",
+            '{"items": [{"item_id": "...", "transcription": "ce que l\'élève a écrit", '
+            '"code": "1", "confidence": 0.95}, ...]}',
+        ]
+
+    return "\n".join(parts)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Prompts pour l'APPROCHE 1 (deux étapes) : transcription HTR puis codage textuel
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def build_transcription_prompt(read_final_state: bool = True) -> str:
+    """Prompt de l'ÉTAPE 1 (HTR) : transcrire fidèlement l'image, sans coder.
+
+    Le modèle ne reçoit PAS le texte de référence : on veut une lecture brute,
+    non biaisée par ce qui était attendu, pour mesurer la transcription pour
+    elle-même. Il restitue exactement ce que l'élève a écrit, fautes comprises.
+
+    Args:
+        read_final_state: si True, consigne de lire l'état final en cas de rature.
+
+    Returns:
+        Le prompt de transcription.
+    """
+    parts = [
+        "Tu es un expert en lecture d'écriture manuscrite d'enfants.",
+        "On te montre l'image manuscrite de la dictée d'un élève de primaire.",
+        "",
+        "Transcris EXACTEMENT le texte écrit par l'élève, mot pour mot, "
+        "FAUTES D'ORTHOGRAPHE COMPRISES. Ne corrige rien, ne complète rien, "
+        "ne réordonne rien. Reproduis fidèlement les erreurs, y compris les "
+        "accents manquants, les mots mal orthographiés et la ponctuation.",
+        "Respecte l'ordre exact d'écriture sur la copie.",
+    ]
+    if read_final_state:
+        parts.append(
+            "Si l'élève a raturé puis réécrit, transcris uniquement la version "
+            "FINALE (non barrée). Ignore complètement le texte barré."
+        )
+    parts += [
+        "",
         "Réponds UNIQUEMENT par un objet JSON, sans texte autour, de la forme :",
-        '{"items": [{"item_id": "...", "transcription": "ce que l\'élève a écrit", '
+        '{"transcription": "le texte exact écrit par l\'élève"}',
+    ]
+    return "\n".join(parts)
+
+
+def build_text_coding_prompt(
+    reference_text: str,
+    transcription: str,
+    items: list[GridItem],
+    scheme: str = "simplifiee",
+) -> str:
+    """Prompt de l'ÉTAPE 2 : coder à partir du TEXTE transcrit (sans image).
+
+    Cette étape ne prend que du texte en entrée : la transcription produite à
+    l'étape 1 et le texte de référence. Elle peut donc être confiée à un modèle
+    purement textuel (panel plus large, moins coûteux). Le modèle aligne la
+    transcription sur les items attendus et attribue un code par item.
+
+    Args:
+        reference_text: texte de référence de la dictée.
+        transcription: transcription produite à l'étape 1.
+        items: items de la grille (mot attendu, dans l'ordre).
+        scheme: "simplifiee" ou "complete".
+
+    Returns:
+        Le prompt de codage textuel.
+    """
+    grille = _GRILLE_COMPLETE if scheme == "complete" else _GRILLE_SIMPLIFIEE
+    parts = [
+        "Tu es correcteur expert pour une évaluation nationale de dictée.",
+        "Tu ne vois PAS l'image : on te donne la transcription de ce que l'élève "
+        "a écrit (produite par un système de lecture), et le texte de référence.",
+        "",
+        "Texte de référence (ce que l'élève devait écrire) :",
+        f"« {reference_text} »",
+        "",
+        "Transcription de la copie de l'élève (fautes comprises) :",
+        f"« {transcription} »",
+        "",
+        grille,
+        "",
+        _CONSIGNE_ALIGNEMENT,
+        "",
+        _CONSIGNE_COMPARAISON,
+        "",
+        "Compare la transcription au mot attendu de chaque item. Si un mot attendu "
+        "n'apparaît pas dans la transcription, code-le 0 (absent).",
+        "",
+        "Items à coder, dans l'ordre. Chaque ligne = un item « identifiant → mot attendu » :",
+    ]
+    for idx, it in enumerate(items, 1):
+        nature = "ponctuation" if it.type == "ponctuation" else "mot"
+        parts.append(f"  {idx:>2}. {it.item_id} → « {it.attendu} » ({nature})")
+    parts += [
+        "",
+        f"Tu dois rendre EXACTEMENT {len(items)} items, dans cet ordre.",
+        "Réponds UNIQUEMENT par un objet JSON, sans texte autour, de la forme :",
+        '{"items": [{"item_id": "...", "transcription": "mot lu pour cet item", '
         '"code": "1", "confidence": 0.95}, ...]}',
     ]
     return "\n".join(parts)

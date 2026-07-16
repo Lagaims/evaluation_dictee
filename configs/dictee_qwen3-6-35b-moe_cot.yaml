@@ -1,0 +1,41 @@
+# Benchmark dictée — Qwen3.6-35B-A3B (VLM) avec chain-of-thought
+#
+# Qwen3.6-35B-A3B est un modèle thinking (génère <think>...</think> par défaut).
+# disable_thinking: true désactive ce comportement pour garder un JSON propre.
+# chain_of_thought: true active la verbalisation via le champ "comparaison" dans
+# le JSON — c'est différent du thinking natif : c'est ton prompt qui le demande.
+#
+# Vérifier d'abord le nom exact du modèle sur llm.lab :
+#   python3 -c "from openai import OpenAI; import os; c = OpenAI(
+#     base_url=os.environ['LLM_BASE_URL'], api_key=os.environ['LLM_API_KEY']);
+#     [print(m.id) for m in c.models.list()]"
+
+name: dictee_qwen3-6-35b-moe_cot
+seed: 42
+approach: end_to_end
+
+model:
+  name: qwen3-6-35b-moe
+  kind: vlm
+  temperature: 0.0
+  max_tokens: 8192               # plus grand que gemma4 : CoT + 83 items
+  max_retries: 2
+  disable_thinking: true         # ← OBLIGATOIRE pour Qwen3 : évite <think>...</think>
+                                 # qui casse le parsing JSON et multiplie la latence
+
+data:
+  corpus: dictee
+  images_path: s3://projet-production-ecrits-depp/dictee_2015/
+  labels_path: s3://projet-production-ecrits-depp/resultat_dictee_2015.csv
+  grid_path: configs/grille_dictee_2015.json
+  limit: null                    # null = toutes les copies ; mettre 50 pour un test
+
+grid:
+  scheme: simplifiee
+
+prompt:
+  method: C
+  chain_of_thought: true         # champ "comparaison" dans le JSON (ton implémentation)
+  enforce_faithful: true
+  read_final_state: true
+  n_few_shot: 0

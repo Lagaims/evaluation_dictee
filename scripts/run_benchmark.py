@@ -17,7 +17,7 @@ from langfuse import get_client
 from evaluation_dictee.config import Secrets, load_config
 from evaluation_dictee.data.reference import load_grid
 from evaluation_dictee.evaluation.calibration import referral_curve
-from evaluation_dictee.models.vlm import VLMScorer
+from evaluation_dictee.models.factory import build_scorer
 from evaluation_dictee.pipeline.benchmark import run_benchmark
 from evaluation_dictee.utils.logging import get_logger
 from evaluation_dictee.utils.tracking import experiment_run, log_metrics
@@ -35,13 +35,11 @@ def main() -> None:
     secrets = Secrets()
 
     grid = load_grid(config.data.grid_path)
-    scorer = VLMScorer(
-        model_config=config.model,
-        prompt_config=config.prompt,
+    scorer = build_scorer(
+        config=config,
+        grid_items=grid.items,
         base_url=secrets.llm_base_url,
         api_key=secrets.llm_api_key,
-        grid_items=grid.items,
-        scheme=config.grid.scheme,
     )
 
     try:
