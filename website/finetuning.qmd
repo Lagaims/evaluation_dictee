@@ -1,0 +1,118 @@
+---
+title: "Fine-tuning"
+subtitle: "Spécialiser un modèle à l'écriture manuscrite des enfants"
+---
+
+## Pourquoi fine-tuner ?
+
+Les modèles multimodaux « génériques » lisent bien un texte imprimé, mais l'écriture
+**manuscrite d'enfants** (lettres mal formées, orthographe approximative, ratures)
+est un cas particulier. Le **fine-tuning** consiste à poursuivre l'entraînement d'un
+modèle existant sur nos propres données, pour qu'il **s'y spécialise**.
+
+Objectif précis ici : améliorer la **fidélité de lecture** (la transcription), pas
+le codage. Le modèle doit apprendre à reproduire le texte de l'élève **fautes
+comprises** — c'est la lecture qu'on entraîne, jamais la correction orthographique.
+
+::: {.callout-note appearance="simple"}
+Le fine-tuning est une **phase ultérieure** du projet (méthode « D »). Il vient
+après avoir établi ce que font les modèles de base, pour mesurer le gain qu'il apporte.
+:::
+
+## Les données : Scoledit
+
+L'entraînement s'appuie sur le corpus **Scoledit**, qui couvre cinq niveaux (CP,
+CE1, CE2, CM1, CM2). Pour chaque copie, on dispose du **scan** et d'une
+**transcription de référence humaine** qui **préserve les fautes**. Le modèle
+apprend à reproduire cette transcription à partir de l'image.
+
+### Découpage train / validation / test
+
+Les données sont séparées en trois ensembles, avec un découpage **stratifié par
+niveau** :
+
+```{mermaid}
+flowchart LR
+    A["Corpus Scoledit<br/>CP → CM2"] --> B["Train — 70 %<br/>le modèle apprend dessus"]
+    A --> C["Validation — 15 %<br/>suivi pendant l'entraînement"]
+    A --> D["Test — 15 %<br/>jamais vu, évaluation finale"]
+```
+
+- **Train (70 %)** : les exemples sur lesquels le modèle apprend.
+- **Validation (15 %)** : sert à surveiller l'entraînement (le modèle progresse-t-il
+  vraiment, ou apprend-il « par cœur » ?).
+- **Test (15 %)** : mis de côté, **jamais vu** pendant l'entraînement, pour une
+  mesure finale honnête.
+
+::: {.callout-tip appearance="simple"}
+**Pourquoi stratifier par niveau ?** Sans précaution, un niveau peu représenté
+(disons le CP) pourrait se retrouver **uniquement** dans le train. On ne saurait
+alors rien de la performance du modèle sur ce niveau. La stratification garantit que
+chaque niveau est présent dans les trois ensembles, dans les mêmes proportions.
+:::
+
+## La méthode : QLoRA
+
+Fine-tuner un gros modèle « en entier » demande énormément de mémoire GPU. Deux
+techniques combinées rendent l'opération abordable :
+
+- **LoRA** (*Low-Rank Adaptation*) : au lieu de modifier **tous** les poids du
+  modèle, on n'entraîne que de **petits modules additionnels** (les *adaptateurs*).
+  Le résultat est un fichier léger (~50–200 Mo) qui se « branche » par-dessus le
+  modèle de base au moment de l'inférence.
+- **QLoRA** : LoRA appliqué à un modèle chargé en **4 bits** (une représentation
+  compressée des poids). La mémoire nécessaire chute d'environ 60 Go à ~20 Go.
+
+```{mermaid}
+flowchart LR
+    A["Modèle de base<br/>(figé, chargé en 4 bits)"] --> C["Adaptateurs LoRA<br/>(seule partie entraînée)"]
+    B["Images + transcriptions<br/>Scoledit"] --> C
+    C --> D["Adaptateur fine-tuné<br/>(~50–200 Mo)"]
+```
+
+Un choix important pour l'HTR : on entraîne **à la fois** les couches de *vision*
+(pour mieux voir l'écriture enfantine) **et** les couches de *langage* (pour
+produire un texte fidèle). Cibler uniquement le langage ne suffirait pas.
+
+## Reproductibilité : un point crucial
+
+Le prompt utilisé **pendant l'entraînement** doit être **identique** à celui utilisé
+**à l'inférence**. Si le modèle apprend avec une consigne et est interrogé avec une
+autre, ses performances s'effondrent. Ce prompt est donc fixé et versionné.
+
+Chaque run enregistre par ailleurs la liste exacte des copies de chaque ensemble
+(`splits.json`), pour pouvoir rejouer précisément la même expérience.
+
+## Suivi de l'entraînement
+
+Contrairement au reste du projet (tracé dans Langfuse), le fine-tuning est suivi
+via **MLflow**, qui enregistre les **courbes d'entraînement** : la *perte* (l'erreur
+que le modèle cherche à minimiser) et le *taux d'apprentissage*, au fil des étapes.
+On y lit si l'apprentissage progresse et se stabilise.
+
+## Prérequis et lancement
+
+::: {.callout-warning appearance="simple"}
+**GPU requis.** Ce script s'exécute sur un service **GPU** du SSP Cloud (H100 80 Go
+recommandé). Ne pas le lancer sur un service CPU.
+:::
+
+```bash
+# Installation des dépendances GPU (sur le service GPU)
+uv pip install unsloth trl peft transformers bitsandbytes \
+            accelerate datasets pillow s3fs pyyaml pydantic mlflow
+
+# Lancement du fine-tuning
+uv run scripts/finetune_htr_scoledit.py --config configs/finetune/finetune_REFERENCE.yaml
+```
+
+Tous les hyperparamètres (nombre d'époques, taille de lot, taux d'apprentissage,
+rang LoRA…) sont pilotés par le fichier de configuration `finetune_REFERENCE.yaml`,
+exhaustivement commenté et prévu pour être copié.
+
+## Et ensuite ?
+
+Une fois l'adaptateur produit, on **réévalue** la transcription (CER/WER, et surtout
+sur-correction) sur l'ensemble de **test**, puis on compare au modèle de base : le
+gain de lecture justifie-t-il le coût du fine-tuning ? Ces résultats viendront
+enrichir les tableaux de la page [Résultats](resultats.qmd).

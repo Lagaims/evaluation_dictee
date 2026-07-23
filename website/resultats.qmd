@@ -1,0 +1,266 @@
+---
+title: "Résultats des deux approches"
+subtitle: "Deux façons de coder une copie, une seule grille de métriques"
+---
+
+```{python}
+#| echo: false
+#| warning: false
+# Câblage des tableaux : on lit les prédictions exportées (S3 ou local) et on
+# calcule les métriques à la volée. Les runs affichés sont surchargeables par
+# variables d'environnement ; un run absent ou inaccessible retombe sur « — »,
+# ce qui garde la page rendable partout (y compris hors SSP Cloud).
+import math
+import os
+
+from evaluation_dictee.evaluation.report import load_predictions
+from evaluation_dictee.evaluation.results_summary import htr_summary, scoring_summary
+
+PREFIX = os.environ.get(
+    "S3_PREDICTIONS_PREFIX", "s3://projet-production-ecrits-depp/predictions"
+)
+RUNS = {
+    "end_to_end": os.environ.get("RESULTATS_RUN_END_TO_END", "dictee_REFERENCE"),
+    "two_stage": os.environ.get("RESULTATS_RUN_TWO_STAGE", ""),
+    "htr_base": os.environ.get("RESULTATS_RUN_HTR_BASE", ""),
+    "htr_finetune": os.environ.get("RESULTATS_RUN_HTR_FINETUNE", ""),
+}
+NOTES: list[str] = []
+
+
+def _path(run: str, htr: bool = False) -> str:
+    suffix = "_htr_predictions.jsonl" if htr else "_predictions.jsonl"
+    return PREFIX.rstrip("/") + "/" + run + suffix
+
+
+def _load(run: str, htr: bool):
+    """Charge et synthétise un run ; None si absent/inaccessible (avec note)."""
+    if not run:
+        return None
+    try:
+        df = load_predictions(_path(run, htr=htr))
+        return htr_summary(df, run=run) if htr else scoring_summary(df, run=run)
+    except Exception as exc:  # noqa: BLE001 — la page doit rester rendable
+        NOTES.append(f"`{run}` indisponible ({type(exc).__name__}).")
+        return None
+
+
+def pct(x) -> str:
+    return "—" if x is None or (isinstance(x, float) and math.isnan(x)) else f"{x:.1%}"
+
+
+def num(x, d: int = 3) -> str:
+    return "—" if x is None or (isinstance(x, float) and math.isnan(x)) else f"{x:.{d}f}"
+
+
+def _col(summary, attr, formatter):
+    return "—" if summary is None else formatter(getattr(summary, attr))
+```
+
+::: {.callout-note appearance="simple"}
+**Tableaux calculés automatiquement** à partir des prédictions exportées sur S3
+(voir la commande d'export en bas de page). Chaque cellule affiche « — » tant que
+le run correspondant n'a pas été exporté. Le seul run disponible à ce jour est un
+échantillon de démonstration (~20 copies, **non représentatif**) : les chiffres
+ci-dessous illustrent le format, pas la performance finale.
+:::
+
+## Les deux approches en détail
+
+Le projet compare deux architectures pour passer de l'image au code. Toutes deux
+respectent la même interface et sont donc évaluées par le même code de métriques :
+la comparaison porte bien sur l'**architecture**, à modèle égal.
+
+### Approche 1 — Deux étapes (transcription puis codage)
+
+On sépare explicitement la **lecture** et le **jugement** :
+
+```{mermaid}
+flowchart LR
+    A["Image de la copie"] --> B["Étape 1 — HTR<br/>transcription du texte brut<br/>(fautes comprises)"]
+    B --> C["Texte transcrit"]
+    C --> D["Étape 2 — codage<br/>texte + référence → codes"]
+    R["Texte de référence"] --> D
+    D --> E["Code par item"]
+```
+
+- **Étape 1 (HTR)** : un modèle multimodal lit l'image et restitue le texte
+  **exactement tel que l'élève l'a écrit**, fautes comprises. Il ne connaît ni le
+  texte de référence ni le découpage en items : on mesure la **lecture pour
+  elle-même**.
+- **Étape 2 (codage)** : un modèle reçoit cette transcription **et** le texte de
+  référence, puis code chaque item. Il ne voit pas l'image. Ce peut être un modèle
+  de texte plus léger (champ `model_stage2`).
+
+| Avantages | Limites |
+|-----------|---------|
+| La transcription intermédiaire est **inspectable** (on voit ce que le modèle a lu). | Deux étapes = **deux sources d'erreur** qui se cumulent. |
+| Les erreurs de **lecture** et de **jugement** sont découplées. | Deux appels au modèle = coût et latence plus élevés. |
+| L'étape 2 peut utiliser un modèle texte moins cher. | |
+
+### Approche 2 — End-to-end (une seule passe)
+
+Un unique modèle multimodal (*VLM*) reçoit l'image, le texte de référence et la
+grille, et produit **directement** le code de chaque item.
+
+```{mermaid}
+flowchart LR
+    A["Image de la copie"] --> C["VLM<br/>lit ET code<br/>en une passe"]
+    R["Texte de référence + grille"] --> C
+    C --> E["Code + confiance par item"]
+```
+
+| Avantages | Limites |
+|-----------|---------|
+| **Un seul appel** : plus simple, plus rapide, moins cher. | La lecture est « fondue » dans le codage : moins facile à diagnostiquer. |
+| Le modèle voit l'image **et** la référence en même temps. | Risque de **sur-correction** (le modèle « corrige » silencieusement l'élève). |
+
+::: {.callout-note appearance="simple"}
+C'est l'approche **par défaut** du projet (la méthode « C » : image + référence +
+grille → codes).
+:::
+
+## Zoom sur la transcription (HTR)
+
+**HTR** = *Handwritten Text Recognition*, la reconnaissance d'écriture manuscrite.
+C'est la brique qui transforme une image en texte. Elle joue un rôle **dans
+l'approche 1** (étape 1), et peut aussi être évaluée **seule** pour comparer les
+modèles sur la seule capacité à lire.
+
+Le point délicat, propre à l'écriture d'enfants : on veut une transcription
+**fidèle**, c'est-à-dire qui **préserve les fautes**. Un modèle qui « corrige »
+spontanément l'orthographe est un mauvais transcripteur ici, même s'il produit un
+français correct — c'est le biais de **sur-correction**, surveillé de près (voir
+la page [Évaluation](evaluation.qmd)).
+
+L'évaluation de la transcription se fait sur le corpus **Scoledit**, qui fournit
+des transcriptions de référence **humaines** (fautes préservées), du CP au CM2.
+On mesure la qualité de lecture par le **CER** et le **WER** (définis dans la page
+[Évaluation](evaluation.qmd)).
+
+## Tableau de comparaison — codage de la dictée
+
+Comparaison des deux approches, **à modèle égal** (pour isoler l'effet de
+l'architecture). Chiffres calculés sur les prédictions exportées.
+
+```{python}
+#| echo: false
+#| output: asis
+e2e = _load(RUNS["end_to_end"], htr=False)
+two = _load(RUNS["two_stage"], htr=False)
+
+# (libellé, attribut de synthèse, formateur, lecture). Les deux dernières lignes
+# ne sont pas dérivables du JSONL de prédictions (copies non transcrites exclues à
+# l'écriture ; coût/latence non tracés ici) → « — » assumé.
+ROWS = [
+    ("Accord brut", "raw_agreement", pct, "plus haut = mieux"),
+    ("Kappa de Cohen", "cohen_kappa", num, "plus haut = mieux"),
+    ("Rappel des fautes", "recall_errors", pct, "plus haut = moins de fautes ratées"),
+    ("Précision sur les fautes", "precision_errors", pct, "plus haut = moins de fausses alertes"),
+    ("Taux de sur-correction", "overcorrection_rate", pct, "plus **bas** = mieux"),
+    ("ECE (calibration)", "ece", num, "plus **bas** = confiance plus fiable"),
+]
+
+lines = [
+    "| Métrique | Approche end-to-end | Approche two-stage | Lecture |",
+    "|----------|:-------------------:|:------------------:|---------|",
+]
+for label, attr, fmt, lecture in ROWS:
+    lines.append(f"| {label} | {_col(e2e, attr, fmt)} | {_col(two, attr, fmt)} | {lecture} |")
+# Lignes non dérivables des prédictions (pour mémoire, cf. note sous le tableau).
+lines.append("| Copies non transcrites | — | — | plus **bas** = mieux |")
+lines.append("| Coût / latence par copie | — | — | plus **bas** = mieux |")
+lines.append("")
+lines.append(": Codage de la dictée — end-to-end vs two-stage {.striped .hover}")
+
+n_info = " ; ".join(
+    f"{name} : {s.n_copies} copies, {s.n_items} items"
+    for name, s in (("end-to-end", e2e), ("two-stage", two))
+    if s is not None
+)
+print("\n".join(lines))
+if n_info:
+    print(f"\n<small>Effectifs — {n_info}.</small>")
+```
+
+::: {.callout-note appearance="simple"}
+Les lignes **Copies non transcrites** et **Coût / latence** ne sont pas dérivables
+du JSONL de prédictions (les copies non transcrites sont exclues à l'écriture, le
+coût/latence n'y est pas tracé) : elles restent à renseigner depuis les logs de run
+ou Langfuse.
+:::
+
+## Tableau de comparaison — transcription seule (HTR)
+
+Qualité de lecture par modèle, sur Scoledit. Chiffres calculés sur les prédictions
+HTR exportées (`<run>_htr_predictions.jsonl`).
+
+```{python}
+#| echo: false
+#| output: asis
+htr_rows = [
+    ("modèle de base", _load(RUNS["htr_base"], htr=True)),
+    ("modèle fine-tuné", _load(RUNS["htr_finetune"], htr=True)),
+]
+
+lines = [
+    "| Modèle | CER | WER | CER normalisé | WER normalisé | Sur-correction |",
+    "|--------|:---:|:---:|:-------------:|:-------------:|:--------------:|",
+]
+for label, s in htr_rows:
+    cer = _col(s, "cer", pct)
+    wer = _col(s, "wer", pct)
+    cer_n = _col(s, "cer_normalise", pct)
+    wer_n = _col(s, "wer_normalise", pct)
+    # Sur-correction HTR : non présente dans le JSONL de prédictions → « — ».
+    lines.append(f"| _{label}_ | {cer} | {wer} | {cer_n} | {wer_n} | — |")
+lines.append("")
+lines.append(": Transcription (HTR) sur Scoledit — plus bas = mieux {.striped .hover}")
+print("\n".join(lines))
+```
+
+## Comment produire ces chiffres
+
+**1. Lancer les runs**, puis **2. exporter les prédictions sur S3** — c'est cette
+exportation que la présente page relit pour remplir les tableaux (aucun pipeline
+n'est réexécuté au rendu du site) :
+
+```bash
+# Codage de la dictée (approche définie dans le YAML : end_to_end ou two_stage)
+uv run scripts/run_benchmark.py --config configs/scoring/dictee_REFERENCE.yaml
+uv run scripts/export_predictions.py --config configs/scoring/dictee_REFERENCE.yaml
+
+# Transcription seule (CER/WER) sur Scoledit
+uv run scripts/run_htr_benchmark.py --config configs/htr/htr_REFERENCE.yaml
+uv run scripts/export_predictions.py --config configs/htr/htr_REFERENCE.yaml --htr
+```
+
+**3. Choisir les runs affichés** via des variables d'environnement (sinon
+`end_to_end` = `dictee_REFERENCE`, les autres vides → « — ») avant de rendre le site :
+
+```bash
+export RESULTATS_RUN_END_TO_END=dictee_gemma4_zeroshot
+export RESULTATS_RUN_TWO_STAGE=dictee_gemma4_two_stage
+export RESULTATS_RUN_HTR_BASE=htr_gemma4_base
+export RESULTATS_RUN_HTR_FINETUNE=htr_gemma4_finetune
+uv run quarto render website/resultats.qmd    # ou : quarto preview website
+```
+
+L'analyse détaillée (distributions, intervalles de confiance, matrices de
+confusion, graphiques) se fait ensuite dans les **notebooks** :
+
+- `notebooks/03_analyse_resultats.ipynb` — métriques globales et par item ;
+- `notebooks/04_diagnostic.ipynb` — inspection copie par copie ;
+- `notebooks/05_analyse_transcription_htr.ipynb` — analyse HTR.
+
+## Ce qu'on cherche à conclure
+
+Au-delà des chiffres bruts, le projet vise trois décisions :
+
+1. **Quelle approche** (end-to-end ou deux étapes) offre le meilleur compromis
+   fiabilité / coût ?
+2. **Quel modèle** lit le mieux l'écriture d'enfants (et le fine-tuning
+   améliore-t-il assez la lecture pour justifier son coût) ?
+3. **Où placer le seuil** de renvoi vers un correcteur humain, pour garantir un
+   taux d'erreur résiduel acceptable tout en automatisant le maximum de copies
+   (voir la **courbe de renvoi** dans la page [Évaluation](evaluation.qmd)).

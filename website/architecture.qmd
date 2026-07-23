@@ -1,0 +1,111 @@
+---
+title: "Architecture du projet"
+subtitle: "Du scan de la copie à l'évaluation, étape par étape"
+---
+
+## Vue d'ensemble
+
+Le projet est une chaîne de traitement (*pipeline*) qui part d'une image de copie
+et produit des métriques de fiabilité. Chaque expérience est entièrement décrite
+par **un fichier de configuration** (YAML) : c'est ce qui la rend reproductible.
+
+![Vue d'ensemble du pipeline](/img/overview_pipeline.png)
+
+Deux principes de conception structurent tout le code :
+
+1. **Tout passe par la configuration.** Aucun chemin ni paramètre n'est écrit « en
+   dur » dans le code : un fichier YAML = un run reproductible, validé au
+   chargement (via *Pydantic*, qui vérifie que chaque champ a le bon type).
+2. **Les deux approches partagent la même interface.** Elles produisent le même
+   type de sortie, donc elles sont mesurées par **exactement le même code**. La
+   comparaison est ainsi équitable : ce qu'on compare, c'est l'architecture, pas
+   deux tuyaux différents.
+
+## La brique centrale : l'interface `Scorer`
+
+Un *Scorer* est un objet qui sait « coder une copie ». Il expose une seule
+méthode : `score_copy(copie, texte_de_référence) → prédictions`. Peu importe ce
+qui se passe à l'intérieur (une passe ou deux étapes), la sortie a toujours la
+même forme.
+
+| Implémentation | Fichier | Ce qu'elle fait |
+|----------------|---------|-----------------|
+| `VLMScorer` | `models/vlm.py` | Approche **end-to-end** : un appel, image → codes. |
+| `TwoStageScorer` | `models/two_stage.py` | Approche **deux étapes** : transcription puis codage. |
+| `build_scorer(...)` | `models/factory.py` | Choisit la bonne implémentation selon le YAML. |
+
+Grâce à cette abstraction, la boucle d'évaluation (`pipeline/benchmark.py`) ne
+connaît qu'un `Scorer` générique : ajouter une nouvelle approche demain
+n'impliquerait de toucher ni les métriques, ni le suivi, ni les notebooks.
+
+## Le déroulé d'un run
+
+Le module `pipeline/benchmark.py` orchestre chaque run :
+
+1. **Charger les données** : les imagettes (depuis S3) et le CSV des codes experts.
+2. **Charger la grille** : le mot attendu pour chaque item, et le texte de référence.
+3. **Coder chaque copie** via le `Scorer`, une copie à la fois.
+4. **Normaliser les codes** au schéma choisi (`simplifiee` ou `complete`), des
+   **deux** côtés (modèle et expert), pour que la comparaison soit sur la même échelle.
+5. **Écrire les prédictions** au fil de l'eau dans un fichier `.jsonl` (une ligne
+   par item × copie).
+6. **Calculer les métriques** finales.
+
+### Robustesse : écriture incrémentale et reprise
+
+Un run complet (plusieurs milliers de copies × ~30 s) peut durer de longues heures.
+Le benchmark est donc conçu pour **survivre aux incidents** :
+
+- **Écriture après chaque copie** (`flush + fsync`) : un crash ne perd que la copie
+  en cours, jamais celles déjà traitées.
+- **Reprise automatique** : relancer la même commande saute les copies déjà
+  présentes dans le fichier de prédictions.
+- **Isolation des erreurs** : une erreur d'API sur une copie est journalisée
+  (`_failed_copies.txt`) et la copie est sautée — le run continue, et cette copie
+  sera retentée au prochain lancement.
+
+## Organisation du dépôt
+
+```
+evaluation_dictee/
+├── configs/                    Configurations d'expériences (YAML), une par run
+│   ├── scoring/                → codage de la dictée
+│   ├── htr/                    → évaluation de la transcription (CER/WER)
+│   ├── finetune/               → fine-tuning LoRA (GPU)
+│   └── grille_dictee_2015.json → grille (mot attendu + fautes connues par item)
+├── src/evaluation_dictee/
+│   ├── config.py               Configs validées (Pydantic) + secrets (.env / Vault)
+│   ├── data/                   Chargement images (S3, TIFF), grille, codes experts
+│   ├── models/                 Les Scorer (vlm, two_stage) + la factory
+│   ├── pipeline/               Prompts, boucle de benchmark, ré-alignement
+│   ├── evaluation/             Métriques, statistiques, calibration, rapports HTML
+│   ├── transcription/          Pipeline HTR indépendant (corpus Scoledit)
+│   └── utils/                  Journalisation, suivi Langfuse
+├── scripts/                    Points d'entrée en ligne de commande
+├── notebooks/                  Analyse interactive des résultats
+├── tests/                      Tests unitaires
+└── docs/                       Note méthodologique, décisions, grille de codage
+```
+
+## Suivi des expériences (traçabilité)
+
+Chaque run est tracé, pour qu'on puisse toujours retrouver *quoi* a produit *quel*
+résultat :
+
+- **Langfuse** (inférence et évaluation) : une **session** par lancement → une
+  **trace** par copie (entrée, sortie, score d'accord) → une **génération** par
+  appel au modèle. Les métriques agrégées y sont enregistrées.
+- **MLflow** (fine-tuning sur GPU) : les courbes d'entraînement (perte, taux
+  d'apprentissage) au fil des étapes.
+
+Cette séparation reflète les deux natures de calcul : l'**inférence/évaluation**
+(passer un modèle existant sur des copies) et l'**entraînement** (modifier un
+modèle), qui n'ont pas les mêmes besoins de suivi.
+
+## Un point d'attention sur les données
+
+Les images fournies sont des **TIFF bi-level (1 bit)** : chaque pixel est soit
+noir soit blanc, sans nuances de gris. Cette binarisation rend certains **accents**
+difficiles à lire (ils se confondent avec le bruit). Le chargement
+(`data/loaders.py`) normalise systématiquement le format en entrée. C'est un
+facteur à garder en tête pour interpréter les erreurs de lecture.

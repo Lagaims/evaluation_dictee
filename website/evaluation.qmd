@@ -1,0 +1,188 @@
+---
+title: "Évaluation de la prédiction"
+subtitle: "Comment assurer la fiabilité de la prédiction "
+---
+
+Évaluer, ici, ce n'est pas seulement « le modèle a-t-il raison ». C'est répondre à
+trois questions distinctes :
+
+1. **Le code prédit est-il fiable ?** (le modèle attribue-t-il les bons codes ?)
+2. **La lecture est-elle fidèle ?** (le modèle lit-il correctement l'écriture ?)
+3. **La indicateur de confiance est-il exploitable ?** (peut-on se fier au score de confiance
+   pour trier ce qu'on automatise et ce qu'on renvoie à un humain ?)
+
+Pour chaque question, des métriques différentes seront utilisées.
+
+---
+
+## 1. Fiabilité du code prédit
+
+On compare, item par item, le code du modèle au code de l'**expert humain**, qui
+sert de **vérité de terrain**.
+
+### Accord brut
+
+La proportion d'items où le modèle et l'expert donnent le **même** code.
+
+$$\text{accord brut} = \frac{\text{nombre d'items identiques}}{\text{nombre total d'items}}$$
+
+Métrique simple à comprendre, mais **peu fiable** lorsqu'une catégorie domine. Si 90 % des mots
+sont corrects, un modèle qui répond « correct » partout obtient 90 % d'accord sans
+rien comprendre.
+
+### Kappa de Cohen
+
+Le **kappa** ($\kappa$) corrige l'accord brut de ce qu'on obtiendrait **par pur
+hasard**. C'est la métrique de référence du projet.
+
+$$\kappa = \frac{p_o - p_e}{1 - p_e}$$
+
+où $p_o$ est l'accord observé et $p_e$ l'accord attendu par hasard.
+
+| Valeur de κ | Interprétation courante |
+|:-----------:|-------------------------|
+| < 0,20 | accord faible |
+| 0,20 – 0,40 | accord passable |
+| 0,40 – 0,60 | accord modéré |
+| 0,60 – 0,80 | accord substantiel |
+| > 0,80 | accord presque parfait |
+
+::: {.callout-tip appearance="simple"}
+**Repère du projet.** Sur le test pilote, la grille simplifiée atteint κ ≈ 0,88 —
+un accord presque parfait. C'est le niveau à retrouver (ou dépasser) à grande échelle.
+:::
+
+### Matrice de confusion
+
+Un tableau qui croise les codes de l'expert (lignes) et ceux du modèle (colonnes).
+La diagonale, ce sont les accords ; **hors diagonale**, ce sont les erreurs, et
+surtout **leur nature**. 
+
+Elle répond à des questions comme : « le modèle confond-il
+plutôt *correct* et *erreur*, ou *erreur* et *absent* ? ».
+
+### F1 pondéré
+
+Une synthèse de la **précision** (quand le modèle dit « erreur », a-t-il raison ?)
+et du **rappel** (parmi les vraies erreurs, combien le modèle en attrape-t-il ?).
+Le « pondéré » tient compte du fait que les catégories sont déséquilibrées.
+
+::: {.callout-note appearance="simple"}
+**Les deux erreurs n'ont pas le même coût.** Rater une faute (mauvais **rappel**)
+et signaler une faute qui n'existe pas (mauvaise **précision**) n'ont pas les mêmes
+conséquences pour la DEPP. On regarde donc les deux séparément, pas seulement leur
+moyenne.
+:::
+
+---
+
+## 2. Fidélité de la lecture (HTR)
+
+Ici on compare la **transcription** produite par le modèle à une transcription de
+**référence humaine**. Les deux préservent les fautes de l'élève : on mesure la
+**lecture**, pas l'orthographe.
+
+### CER — taux d'erreur au niveau caractère
+
+*Character Error Rate.* Le nombre minimal de corrections (insérer, supprimer,
+remplacer un caractère) pour transformer la transcription du modèle en la référence,
+divisé par la longueur de la référence.
+
+$$\text{CER} = \frac{\text{insertions} + \text{suppressions} + \text{substitutions (caractères)}}{\text{nombre de caractères de la référence}}$$
+
+**0 = transcription parfaite.** 0,10 signifie « environ un caractère sur dix à corriger ».
+
+### WER — taux d'erreur au niveau mot
+
+*Word Error Rate.* La même idée, mais en comptant les **mots** entiers. Plus sévère
+que le CER : un seul caractère faux rend tout le mot faux.
+
+### Variantes normalisées
+
+On calcule aussi CER et WER après **normalisation** (minuscules, sans accents ni
+ponctuation). Comparer la version brute et la version normalisée permet de
+**distinguer** les vraies erreurs de lecture des simples différences de casse ou
+d'accent — particulièrement utile ici, car la binarisation des scans rend les
+accents difficiles à lire.
+
+### Taux de sur-correction
+
+::: {.callout-important appearance="simple"}
+**La métrique critique pour l'écriture d'enfants.** La sur-correction, c'est quand
+le modèle « corrige » silencieusement l'élève : il lit *maison* là où l'enfant a
+écrit *maisson*. Le texte produit est correct, mais **faux** pour notre usage :
+on perd précisément la faute qu'on voulait détecter. Un bon transcripteur doit
+reproduire les fautes, pas les gommer.
+:::
+
+---
+
+## 3. Fiabilité de la confiance
+
+Chaque code prédit s'accompagne d'un **score de confiance**. L'objectif final du
+projet est d'**automatiser les items sûrs** et de **renvoyer les items douteux** à
+un correcteur humain. Pour cela, encore faut-il que la confiance soit *fiable*.
+
+### Diagramme de fiabilité
+
+On regroupe les items par tranche de confiance (0–10 %, 10–20 %, …) et, dans chaque
+tranche, on compare la **confiance annoncée** à l'**accord réellement observé**.
+
+Un modèle **bien calibré** est sur la diagonale : quand il annonce 80 % de
+confiance, il a effectivement raison ~80 % du temps. S'il est au-dessus de sa
+performance réelle, il est **trop sûr de lui** (dangereux : on automatiserait des
+erreurs).
+
+### ECE — erreur de calibration attendue
+
+*Expected Calibration Error.* Un unique chiffre qui résume le diagramme : l'écart
+moyen (pondéré par le nombre d'items) entre confiance annoncée et accord observé.
+
+- **0 = parfaitement calibré.**
+- **> ~0,10** : le score de confiance n'est pas fiable tel quel et doit être
+  **recalibré** avant de servir de seuil de décision.
+
+### Courbe de renvoi humain — le livrable décisionnel
+
+C'est **la** sortie qui guide la décision opérationnelle. Pour chaque **seuil** de
+confiance, on mesure deux quantités :
+
+- le **taux de renvoi humain** : la part d'items renvoyés à un correcteur (ceux dont
+  la confiance est sous le seuil) ;
+- le **taux d'erreur résiduel** : le taux d'erreur qui subsiste sur les items que
+  le modèle a **auto-validés** (au-dessus du seuil).
+
+```{mermaid}
+flowchart LR
+    A["Tous les items codés<br/>+ confiance"] --> B{"confiance ≥ seuil ?"}
+    B -->|oui| C["Auto-validé<br/>(on mesure l'erreur résiduelle)"]
+    B -->|non| D["Renvoyé à un humain"]
+```
+
+Faire varier le seuil dessine un compromis : **plus on renvoie à l'humain, plus
+l'erreur résiduelle baisse**. La DEPP peut ainsi choisir un point de
+fonctionnement, par exemple : « je tolère 2 % d'erreur résiduelle — combien de
+copies dois-je alors relire à la main ? »
+
+---
+
+## 4. Toujours comparer à l'humain
+
+Une dernière exigence transversale : la performance de l'IA se lit **relativement à
+la variabilité entre correcteurs humains**. Deux experts qui codent la même copie ne
+sont pas toujours d'accord — c'est une borne naturelle. Un modèle qui atteint le
+niveau d'accord *inter-humains* fait déjà « aussi bien qu'un humain ». On situe donc
+systématiquement les métriques du modèle par rapport à ce plancher humain (estimé
+via des modèles d'accord inter-codeurs, type Dawid & Skene).
+
+---
+
+## Récapitulatif
+
+| Question | Métriques | Sens |
+|----------|-----------|------|
+| Le codage est-il fiable ? | Accord brut, **kappa**, matrice de confusion, F1 | plus haut = mieux |
+| La lecture est-elle fidèle ? | **CER**, **WER** (+ normalisés), **sur-correction** | plus bas = mieux |
+| La confiance est-elle exploitable ? | Diagramme de fiabilité, **ECE**, **courbe de renvoi** | ECE bas ; courbe = arbitrage |
+
+: Les trois familles de métriques {.striped .hover}

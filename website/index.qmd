@@ -1,0 +1,83 @@
+---
+title: "Évaluation automatique de la dictée"
+subtitle: "Coder les écrits d'élèves (dictées, recopie et rédaction) avec des modèles d'IA à partir d'une grille de notation"
+---
+
+::: {.callout-note appearance="simple"}
+Projet **DEPP × SSP Lab (INSEE)**. Ce site présente les principaux points importants du projet :
+une présentation générale, l'architecture du pipeline de travail,
+les résultats, la démarche d'évaluation et le fine-tuning.
+Pour l'instant, seule l'évaluation des copies de dictées est traitée. A terme, toutes les copies (dictée, recopie et rédaction) pourront être évaluées.
+:::
+
+## Le problème en une phrase
+
+Depuis 2015, la **DEPP** (Direction de l'évaluation, de la prospective et de la
+performance du Ministère de l'Éducation nationale) corrige à la main la dictée
+d'un échantillon d'élèves de CM2. Cette correction est **entièrement manuelle**,
+coûteuse (5 à 10 minutes par copie), et donc difficile à passer à l'échelle.
+
+**La question du projet** : est-ce que l'IA peut être un nouvel outil permettant d'accélérer
+l'évaluation des copies et être cfomplémentaire à la correction manuelle faite par les professeurs ? 
+
+## La tâche, concrètement
+
+Chaque **item** (un mot ou un signe de ponctuation) écrit par l'élève reçoit un **code**.
+Dans un premier temps, la cible principale du projet est une **grille simplifiée** à trois modalités :
+
+| Code | Signification |
+|:----:|---------------|
+| **1** | Orthographe correcte |
+| **9** | Erreur (lexicale, grammaticale, ou les deux) |
+| **0** | Mot absent (oubli de l'élève) |
+
+: La grille de codage simplifiée {.striped .hover}
+
+::: {.callout-tip appearance="simple"}
+**Pourquoi travailler sur une grille simplifiée ?** La grille complète distingue erreur *lexicale*,
+*grammaticale* et *mixte* (codes 3/4/5). Sur le test pilote, regrouper ces trois
+codes en un seul (« erreur ») permet de supprimer exactement la zone où les correcteurs 
+humains eux-mêmes divergent le plus.
+:::
+
+L'entrée du modèle est **l'image scannée** de la copie ; la référence est le
+**texte de la dictée** (connu à l'avance) et une **grille** qui donne, pour chaque
+item, le mot attendu (grille de codage). La sortie est un code par item, accompagné d'un **score de
+confiance**.
+
+## Deux approches comparées
+
+Le cœur méthodologique du projet est la comparaison de deux
+méthodes de prédiction des erreurs dans les écrits d'élèves, évaluées par exactement le même code de métriques :
+
+::: {.grid}
+
+::: {.g-col-12 .g-col-md-6}
+### Approche end-to-end
+Un seul modèle multimodal lit l'image **et** produit directement le code de chaque
+item, en une passe. Simple, rapide, approche **par défaut**.
+:::
+
+::: {.g-col-12 .g-col-md-6}
+### Approche en deux étapes
+Étape 1 : un modèle **transcrit** l'image en texte brut (lecture, ou *HTR*).
+Étape 2 : un modèle **code** ce texte. On sépare ainsi *lire* et *juger*.
+:::
+
+:::
+
+Ces deux approches sont détaillées dans la page **[Résultats](resultats.qmd)**.
+
+## Comment lire ce site
+
+| Page | Ce que vous y trouverez |
+|------|-------------------------|
+| **[Architecture](architecture.qmd)** | Comment le projet est organisé : du scan à la métrique, brique par brique. |
+| **[Résultats](resultats.qmd)** | Les deux approches en détail, et les tableaux de comparaison (à compléter). |
+| **[Évaluation & métriques](evaluation.qmd)** | Chaque métrique expliquée : ce qu'elle mesure et pourquoi. |
+| **[Fine-tuning](finetuning.qmd)** | Spécialiser un modèle à l'écriture d'enfants. |
+
+::: {.callout-important appearance="simple"}
+**Données sensibles.** Les copies sont des écritures d'élèves **mineurs**. Les
+microdonnées ne quittent **jamais** le SSP Cloud et ne sont jamais versionnées.
+:::

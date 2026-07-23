@@ -1,0 +1,41 @@
+project:
+  type: website
+  output-dir: _site
+
+website:
+  title: "Évaluation automatique de la dictée"
+  description: "Coder automatiquement la dictée manuscrite d'élèves avec des modèles d'IA, et en mesurer la fiabilité. DEPP × SSP Lab (INSEE)."
+  page-footer:
+    left: "DEPP × SSP Lab (INSEE)"
+    right: "Construit avec [Quarto](https://quarto.org)"
+  navbar:
+    background: primary
+    search: true
+    left:
+      - text: "Accueil"
+        file: index.qmd
+      - text: "Architecture"
+        file: architecture.qmd
+      - text: "Résultats"
+        file: resultats.qmd
+      - text: "Évaluation & métriques"
+        file: evaluation.qmd
+      - text: "Fine-tuning"
+        file: finetuning.qmd
+
+format:
+  html:
+    theme:
+      - cosmo
+    toc: true
+    toc-title: "Sur cette page"
+    toc-depth: 3
+    number-sections: false
+    code-copy: true
+    code-overflow: wrap
+    fig-responsive: true
+    smooth-scroll: true
+
+execute:
+  freeze: auto
+  echo: true
